@@ -1,4 +1,3 @@
-# app/main.py
 import os
 os.environ.setdefault("USER_AGENT", "rag-system/0.1.0")
 import logging
@@ -9,6 +8,8 @@ from app.config import settings
 from app.ingestion.loaders import load_document
 from app.ingestion.chunker import chunk_documents
 from app.ingestion.embedder import ingest_chunks
+from app.retrieval.hybrid import hybrid_search
+from app.retrieval.context import assemble_context
 
 os.environ.setdefault("USER_AGENT", "rag-system/0.1.0")
 
@@ -62,3 +63,23 @@ async def ingest(request: IngestRequest):
     except Exception as e:
         logger.error(f"Ingestion failed: {e}")
         raise HTTPException(status_code=500, detail="Ingestion failed — check server logs")
+    
+
+@app.get("/retrieve")
+async def retrieve(q: str, top_k: int = 5):
+    """
+    Given a question, return the most relevant chunks from ChromaDB.
+    Uses hybrid search (semantic + BM25) with RRF fusion.
+    """
+    try:
+        chunks  = hybrid_search(q, top_k=top_k)
+        context = assemble_context(chunks)
+        return {
+            "query":   q,
+            "chunks":  chunks,
+            "context": context,
+            "total":   len(chunks),
+        }
+    except Exception as e:
+        logger.error(f"Retrieval failed: {e}")
+        raise HTTPException(status_code=500, detail="Retrieval failed — check server logs")
