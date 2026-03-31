@@ -13,6 +13,7 @@ from app.retrieval.context import assemble_context
 from fastapi.responses import StreamingResponse
 from app.generation.chain import ask, build_rag_chain
 from app.generation.scheduler import start_scheduler, refresh_documents
+from app.hallucination.scorer import score_answer
 
 os.environ.setdefault("USER_AGENT", "rag-system/0.1.0")
 
@@ -91,12 +92,39 @@ async def retrieve(q: str, top_k: int = 5):
 @app.post("/ask")
 async def ask_question(request: IngestRequest):
     """
-    Non-streaming version — waits for the full answer then returns it.
-    Good for testing and API consumers that don't support streaming.
+    Retrieve → generate → score for hallucination.
+    Every answer now includes a faithfulness score and confidence level.
     """
     try:
-        result = ask(request.source)  # reusing IngestRequest for simplicity (has 'source' field)
-        return result
+        # Step 1 — retrieve chunks
+        chunks  = hybrid_search(request.source, top_k=5)
+        context = assemble_context(chunks)
+
+        # Step 2 — generate answer
+        chain  = build_rag_chain(streaming=False)
+        answer = chain.invoke({
+            "context":  context,
+            "question": request.source,
+        })
+
+        # Step 3 — score for hallucination
+        hal_score = score_answer(request.source, answer, chunks)
+
+        # Step 4 — extract sources
+        sources = list({
+            f"{c['metadata'].get('source', 'unknown')} (page {c['metadata'].get('page', '?')})"
+            for c in chunks
+        })
+
+        return {
+            "question":          request.source,
+            "answer":            answer,
+            "sources":           sources,
+            "chunks_used":       len(chunks),
+            "faithfulness_score": hal_score["faithfulness_score"],
+            "confidence_level":   hal_score["confidence_level"],
+            "nli_verdict":        hal_score["nli_verdict"],
+        }
     except Exception as e:
         logger.error(f"Generation failed: {e}")
         raise HTTPException(status_code=500, detail="Generation failed — check server logs")
@@ -138,3 +166,23 @@ async def lifespan(app: FastAPI):
     # Cleanly shut down the scheduler when the server stops
     scheduler.shutdown()
     logger.info("RAG System shutting down")
+
+class ScoreRequest(BaseModel):
+    question: str
+    answer:   str
+    context:  str  # plain text context
+
+@app.post("/score")
+async def score(request: ScoreRequest):
+    """
+    Score any question/answer pair for hallucination risk.
+    Useful for evaluating answers from outside the system.
+    """
+    try:
+        # Wrap context as a single chunk for the scorer
+        chunks = [{"content": request.context, "metadata": {}}]
+        result = score_answer(request.question, request.answer, chunks)
+        return result
+    except Exception as e:
+        logger.error(f"Scoring failed: {e}")
+        raise HTTPException(status_code=500, detail="Scoring failed — check server logs")
