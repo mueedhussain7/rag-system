@@ -23,24 +23,36 @@ def test_prompt_enforces_grounding():
 
 def test_ask_returns_answer_and_sources():
     """/ask should return question, answer, sources, and chunks_used."""
-    mock_result = {
-        "question":    "what is this about?",
-        "answer":      "This paper is about mobile learning.",
-        "sources":     ["doc.pdf (page 1)"],
-        "chunks_used": 5,
+    mock_chunks = [{
+        "content": "Mobile learning is the topic.",
+        "metadata": {"source": "doc.pdf", "page": 1},
+        "score": 0.9, "method": "semantic",
+    }]
+    mock_hal = {
+        "faithfulness_score": 1.0,
+        "confidence_level": "high",
+        "nli_verdict": "clean",
+        "nli_details": {},
     }
-    with patch("app.main.ask", return_value=mock_result):
+    with patch("app.main.hybrid_search", return_value=mock_chunks), \
+         patch("app.main.build_rag_chain") as mock_chain_fn, \
+         patch("app.main.score_answer", return_value=mock_hal), \
+         patch("app.main.log_query"):
+        mock_chain = MagicMock()
+        mock_chain.invoke.return_value = "This paper is about mobile learning."
+        mock_chain_fn.return_value = mock_chain
         response = client.post("/ask", json={"source": "what is this about?"})
 
     assert response.status_code == 200
     data = response.json()
     assert data["answer"] == "This paper is about mobile learning."
     assert "sources" in data
-    assert data["chunks_used"] == 5
+    assert "faithfulness_score" in data
+
 
 def test_ask_returns_500_on_failure():
     """/ask should return 500 if generation fails."""
-    with patch("app.main.ask", side_effect=Exception("LLM error")):
+    with patch("app.main.hybrid_search", side_effect=Exception("search error")):
         response = client.post("/ask", json={"source": "test question"})
     assert response.status_code == 500
 

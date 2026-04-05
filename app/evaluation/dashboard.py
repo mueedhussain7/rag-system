@@ -320,9 +320,176 @@ if page == "Overview":
 # ═══════════════════════════
 # PAGES 2-4 — PLACEHOLDERS
 # ═══════════════════════════
+# ══════════════════════════════════════════════════════════════════════════════
+# PAGE 2 — HALLUCINATION TRACKER
+# ══════════════════════════════════════════════════════════════════════════════
 elif page == "Hallucination Tracker":
-    st.markdown("### Hallucination Tracker")
+    _, df, _ = load_data()
 
+    st.markdown("""
+    <div style='margin-bottom:28px;'>
+        <h1 style='color:#e2e8f0; font-size:26px; font-weight:700; margin:0;'>
+            Hallucination Tracker
+        </h1>
+        <p style='color:#4a6080; font-size:13px; margin:6px 0 0 0;'>
+            Faithfulness scores, confidence trends, and flagged answers
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
+
+    if df.empty:
+        st.info("No queries logged yet.")
+        st.stop()
+
+    valid = df[df["faithfulness_score"] >= 0].copy()
+
+    # ── Score timeline with confidence bands ──────────────────────────────────
+    st.markdown('<div class="section-header">Faithfulness score timeline</div>',
+                unsafe_allow_html=True)
+
+    fig = go.Figure()
+
+    # Background bands showing danger / caution / good zones
+    fig.add_hrect(y0=0, y1=0.5,
+                  fillcolor=COLORS["red"], opacity=0.04, line_width=0,
+                  annotation_text="danger zone",
+                  annotation_font_color=COLORS["red"],
+                  annotation_position="top left")
+    fig.add_hrect(y0=0.5, y1=0.8,
+                  fillcolor=COLORS["amber"], opacity=0.04, line_width=0,
+                  annotation_text="caution",
+                  annotation_font_color=COLORS["amber"],
+                  annotation_position="top left")
+    fig.add_hrect(y0=0.8, y1=1.0,
+                  fillcolor=COLORS["green"], opacity=0.04, line_width=0,
+                  annotation_text="good",
+                  annotation_font_color=COLORS["green"],
+                  annotation_position="top left")
+
+    if not valid.empty:
+        # Each point is coloured by its confidence level
+        point_colors = [
+            CONFIDENCE_COLORS.get(c, COLORS["gray"])
+            for c in valid["confidence_level"]
+        ]
+        fig.add_trace(go.Scatter(
+            x=valid["timestamp"],
+            y=valid["faithfulness_score"],
+            mode="lines+markers",
+            line=dict(color=COLORS["blue"], width=1.5, dash="dot"),
+            marker=dict(color=point_colors, size=10,
+                        line=dict(color="#0d1224", width=1.5)),
+            hovertemplate=(
+                "<b>Score: %{y:.2f}</b><br>"
+                "%{x|%H:%M %d %b}<extra></extra>"
+            ),
+        ))
+
+    fig.update_layout(**CHART_THEME, height=300, showlegend=False)
+    fig.update_yaxes(range=[0, 1.05])
+    st.plotly_chart(fig, use_container_width=True)
+
+    # ── Confidence breakdown + NLI verdict ───────────────────────────────────
+    left, right = st.columns(2)
+
+    with left:
+        st.markdown('<div class="section-header">Confidence breakdown</div>',
+                    unsafe_allow_html=True)
+        conf_counts = df["confidence_level"].value_counts()
+        fig2 = go.Figure()
+        for level, color in CONFIDENCE_COLORS.items():
+            count = conf_counts.get(level, 0)
+            fig2.add_trace(go.Bar(
+                name=level.capitalize(),
+                x=[level.capitalize()],
+                y=[count],
+                marker_color=color,
+                marker_line=dict(color="#080c18", width=1),
+                hovertemplate=f"<b>{level}</b><br>%{{y}} queries<extra></extra>",
+            ))
+        fig2.update_layout(**CHART_THEME, height=260,
+                           barmode="group", showlegend=True,
+                           legend=dict(font=dict(color="#a0aec0")))
+        st.plotly_chart(fig2, use_container_width=True)
+
+    with right:
+        st.markdown('<div class="section-header">NLI verdict distribution</div>',
+                    unsafe_allow_html=True)
+        nli_counts = df["nli_verdict"].value_counts()
+        nli_colors = {
+            "clean":        COLORS["green"],
+            "uncertain":    COLORS["amber"],
+            "contradicted": COLORS["red"],
+        }
+        fig3 = go.Figure(go.Pie(
+            labels=nli_counts.index.tolist(),
+            values=nli_counts.values.tolist(),
+            marker=dict(
+                colors=[nli_colors.get(l, COLORS["gray"])
+                        for l in nli_counts.index],
+                line=dict(color="#080c18", width=2),
+            ),
+            hole=0.55,
+            textinfo="label+percent",
+            textfont=dict(color="#a0aec0", size=12),
+            hovertemplate="<b>%{label}</b><br>%{value} queries<extra></extra>",
+        ))
+        fig3.update_layout(**CHART_THEME, height=260, showlegend=False)
+        st.plotly_chart(fig3, use_container_width=True)
+
+    # ── Worst performing answers ──────────────────────────────────────────────
+    st.markdown('<div class="section-header">Lowest faithfulness answers</div>',
+                unsafe_allow_html=True)
+
+    if valid.empty:
+        st.info("No scored answers yet — ask questions via POST /ask first.")
+    else:
+        worst = (valid.nsmallest(5, "faithfulness_score")
+                 [["timestamp","question","answer",
+                   "faithfulness_score","confidence_level"]]
+                 .copy())
+
+        for _, row in worst.iterrows():
+            badge_class = f"badge-{row['confidence_level']}"
+            score_color = (
+                COLORS["green"] if row["faithfulness_score"] >= 0.8
+                else COLORS["amber"] if row["faithfulness_score"] >= 0.5
+                else COLORS["red"]
+            )
+            st.markdown(f"""
+            <div style="background:#0d1224; border:1px solid #1e2d5a;
+                        border-radius:10px; padding:16px; margin-bottom:10px;">
+                <div style="display:flex; justify-content:space-between;
+                            align-items:center; margin-bottom:8px;">
+                    <span style="color:#4a6080; font-size:12px;">
+                        {row['timestamp'].strftime('%d %b %Y %H:%M')}
+                    </span>
+                    <div style="display:flex; gap:8px; align-items:center;">
+                        <span style="color:{score_color}; font-weight:700; font-size:14px;">
+                            {row['faithfulness_score']:.2f}
+                        </span>
+                        <span class="{badge_class}">{row['confidence_level']}</span>
+                    </div>
+                </div>
+                <div style="color:#e2e8f0; font-size:13px; font-weight:500;
+                            margin-bottom:6px;">
+                    Q: {row['question'][:100]}
+                </div>
+                <div style="color:#a0aec0; font-size:12px; line-height:1.5;">
+                    {row['answer'][:200]}…
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# PAGES 3-4 — COMING NEXT
+# ══════════════════════════════════════════════════════════════════════════════
+elif page == "Query Explorer":
+    st.markdown("### 🚧 Coming next — Query Explorer")
+
+elif page == "Document Manager":
+    st.markdown("### 🚧 Coming next — Document Manager")
 elif page == "Query Explorer":
     st.markdown("### Query Explorer")
 

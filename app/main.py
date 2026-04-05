@@ -16,7 +16,9 @@ from app.retrieval.context import assemble_context
 from app.generation.chain import ask, build_rag_chain
 from app.generation.scheduler import start_scheduler, refresh_documents
 from app.hallucination.scorer import score_answer
-from app.evaluation.logger import init_db, log_query, log_ingestion
+from app.evaluation.logger import init_db, log_query, log_ingestion, get_summary_stats
+
+
 
 logging.basicConfig(
     level=getattr(logging, settings.log_level),
@@ -173,3 +175,13 @@ async def score(request: ScoreRequest):
     except Exception as e:
         logger.error(f"Scoring failed: {e}")
         raise HTTPException(status_code=500, detail="Scoring failed — check server logs")
+    
+
+@app.get("/metrics")
+async def metrics():
+    """Returns current system health metrics as JSON."""
+    try:
+        return get_summary_stats()
+    except Exception as e:
+        logger.error(f"Metrics failed: {e}")
+        raise HTTPException(status_code=500, detail="Metrics failed")
