@@ -3,7 +3,6 @@ import json
 import sys
 from pathlib import Path
 
-# Make sure app/ is importable from the dashboard script
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 import streamlit as st
@@ -12,7 +11,7 @@ import plotly.express as px
 import pandas as pd
 from app.evaluation.logger import get_summary_stats, get_all_queries, get_all_ingestions
 
-# ── Page config ───────────────────────────────────────────────────────────────
+#Page config 
 st.set_page_config(
     page_title="RAG System Dashboard",
     page_icon="⬡",
@@ -20,7 +19,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# ── Global styles ─────────────────────────────────────────────────────────────
+#Global styles
 st.markdown("""
 <style>
 /* Base */
@@ -109,7 +108,7 @@ html, body, [class*="css"] {
 </style>
 """, unsafe_allow_html=True)
 
-# ── Sidebar navigation ────────────────────────────────────────────────────────
+#Sidebar navigation
 with st.sidebar:
     st.markdown("""
     <div style='padding: 8px 0 24px 0;'>
@@ -132,7 +131,7 @@ with st.sidebar:
         st.cache_data.clear()
         st.rerun()
 
-# ── Shared chart theme ────────────────────────────────────────────────────────
+#Shared chart theme
 CHART_THEME = dict(
     paper_bgcolor="rgba(0,0,0,0)",
     plot_bgcolor="rgba(13,18,36,0.6)",
@@ -191,7 +190,7 @@ if page == "Overview":
     </div>
     """, unsafe_allow_html=True)
 
-    # ── Metric cards ──────────────────────────────────────────────────────────
+    #Metric cards
     c1, c2, c3, c4 = st.columns(4)
 
     with c1:
@@ -237,7 +236,7 @@ if page == "Overview":
         st.info("No queries logged yet — ask some questions via POST /ask to populate the dashboard.")
         st.stop()
 
-    # ── Charts row ────────────────────────────────────────────────────────────
+    #Charts row
     left, right = st.columns([3, 2])
 
     with left:
@@ -288,7 +287,7 @@ if page == "Overview":
                            )])
         st.plotly_chart(fig2, use_container_width=True)
 
-    # ── Latency distribution ──────────────────────────────────────────────────
+    #Latency distribution
     st.markdown('<div class="section-header">Latency distribution (ms)</div>',
                 unsafe_allow_html=True)
     fig3 = go.Figure(go.Histogram(
@@ -316,10 +315,6 @@ if page == "Overview":
     recent.columns      = ["Time", "Question", "Faithfulness", "Confidence", "Latency (ms)"]
     st.dataframe(recent, use_container_width=True, hide_index=True)
 
-
-# ═══════════════════════════
-# PAGES 2-4 — PLACEHOLDERS
-# ═══════════════════════════
 # ══════════════════════════════════════════════════════════════════════════════
 # PAGE 2 — HALLUCINATION TRACKER
 # ══════════════════════════════════════════════════════════════════════════════
@@ -343,7 +338,7 @@ elif page == "Hallucination Tracker":
 
     valid = df[df["faithfulness_score"] >= 0].copy()
 
-    # ── Score timeline with confidence bands ──────────────────────────────────
+    #Score timeline with confidence bands
     st.markdown('<div class="section-header">Faithfulness score timeline</div>',
                 unsafe_allow_html=True)
 
@@ -389,7 +384,7 @@ elif page == "Hallucination Tracker":
     fig.update_yaxes(range=[0, 1.05])
     st.plotly_chart(fig, use_container_width=True)
 
-    # ── Confidence breakdown + NLI verdict ───────────────────────────────────
+    #Confidence breakdown + NLI verdict
     left, right = st.columns(2)
 
     with left:
@@ -437,7 +432,7 @@ elif page == "Hallucination Tracker":
         fig3.update_layout(**CHART_THEME, height=260, showlegend=False)
         st.plotly_chart(fig3, use_container_width=True)
 
-    # ── Worst performing answers ──────────────────────────────────────────────
+    #Worst performing answers
     st.markdown('<div class="section-header">Lowest faithfulness answers</div>',
                 unsafe_allow_html=True)
 
@@ -483,15 +478,210 @@ elif page == "Hallucination Tracker":
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# PAGES 3-4 — COMING NEXT
+# PAGE 3 — QUERY EXPLORER
 # ══════════════════════════════════════════════════════════════════════════════
 elif page == "Query Explorer":
-    st.markdown("### 🚧 Coming next — Query Explorer")
+    _, df, _ = load_data()
 
-elif page == "Document Manager":
-    st.markdown("### 🚧 Coming next — Document Manager")
-elif page == "Query Explorer":
-    st.markdown("### Query Explorer")
+    st.markdown("""
+    <div style='margin-bottom:28px;'>
+        <h1 style='color:#e2e8f0; font-size:26px; font-weight:700; margin:0;'>
+            Query Explorer
+        </h1>
+        <p style='color:#4a6080; font-size:13px; margin:6px 0 0 0;'>
+            Browse, search, and inspect every question and answer
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
 
+    if df.empty:
+        st.info("No queries logged yet.")
+        st.stop()
+
+    #Filters
+    f1, f2, f3 = st.columns([3, 1, 1])
+    with f1:
+        search = st.text_input("Search", placeholder="Filter questions…",
+                               label_visibility="collapsed")
+    with f2:
+        conf_filter = st.selectbox("Confidence",
+                                   ["All", "high", "medium", "low", "unverified"],
+                                   label_visibility="collapsed")
+    with f3:
+        sort_by = st.selectbox("Sort by",
+                               ["Newest first", "Lowest faithfulness", "Highest latency"],
+                               label_visibility="collapsed")
+
+    # Apply filters
+    filtered = df.copy()
+    if search:
+        filtered = filtered[
+            filtered["question"].str.contains(search, case=False, na=False)
+        ]
+    if conf_filter != "All":
+        filtered = filtered[filtered["confidence_level"] == conf_filter]
+    if sort_by == "Newest first":
+        filtered = filtered.sort_values("timestamp", ascending=False)
+    elif sort_by == "Lowest faithfulness":
+        filtered = filtered[filtered["faithfulness_score"] >= 0]\
+                   .sort_values("faithfulness_score")
+    elif sort_by == "Highest latency":
+        filtered = filtered.sort_values("latency_ms", ascending=False)
+
+    st.markdown(f"""
+    <div style="color:#4a6080; font-size:12px; margin:8px 0 16px;">
+        Showing {len(filtered)} of {len(df)} queries
+    </div>
+    """, unsafe_allow_html=True)
+
+    #Query cards
+    for _, row in filtered.iterrows():
+        badge_class = f"badge-{row['confidence_level']}"
+        score       = row["faithfulness_score"]
+        score_str   = f"{score:.2f}" if score >= 0 else "—"
+        score_color = (COLORS["green"]  if score >= 0.8
+                       else COLORS["amber"] if score >= 0.5
+                       else COLORS["red"]   if score >= 0
+                       else COLORS["gray"])
+        sources     = row.get("sources", [])
+        sources_html = " ".join([
+            f'<span style="background:#111a38; color:#6b80a8; padding:2px 8px;'
+            f'border-radius:4px; font-size:11px; margin-right:4px;">{s}</span>'
+            for s in (sources if isinstance(sources, list) else [])
+        ])
+
+        with st.expander(f"  {row['question'][:90]}", expanded=False):
+            st.markdown(f"""
+            <div style="display:flex; gap:12px; align-items:center;
+                        margin-bottom:12px; flex-wrap:wrap;">
+                <span style="color:#4a6080; font-size:12px;">
+                    {pd.to_datetime(row['timestamp']).strftime('%d %b %Y %H:%M')}
+                </span>
+                <span class="{badge_class}">{row['confidence_level']}</span>
+                <span style="color:{score_color}; font-weight:600; font-size:13px;">
+                    Faithfulness: {score_str}
+                </span>
+                <span style="color:#4a6080; font-size:12px;">
+                    {row['latency_ms']:.0f} ms
+                </span>
+            </div>
+            <div style="color:#e2e8f0; font-size:13px; line-height:1.7;
+                        margin-bottom:12px;">
+                {row['answer']}
+            </div>
+            <div style="margin-top:8px;">{sources_html}</div>
+            """, unsafe_allow_html=True)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# PAGE 4 — DOCUMENT MANAGER
+# ══════════════════════════════════════════════════════════════════════════════
 elif page == "Document Manager":
-    st.markdown("### Document Manager")
+    _, _, ingestions = load_data()
+
+    st.markdown("""
+    <div style='margin-bottom:28px;'>
+        <h1 style='color:#e2e8f0; font-size:26px; font-weight:700; margin:0;'>
+            Document Manager
+        </h1>
+        <p style='color:#4a6080; font-size:13px; margin:6px 0 0 0;'>
+            Ingested documents, chunk counts, and ingestion history
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
+
+    #Files on disk
+    st.markdown('<div class="section-header">Documents on disk</div>',
+                unsafe_allow_html=True)
+
+    docs_path = Path("data/documents")
+    files     = list(docs_path.glob("*.pdf")) + list(docs_path.glob("*.txt"))
+
+    if not files:
+        st.info("No documents found in data/documents/")
+    else:
+        cols = st.columns(3)
+        for i, f in enumerate(files):
+            size_kb = round(f.stat().st_size / 1024, 1)
+            with cols[i % 3]:
+                st.markdown(f"""
+                <div class="metric-card" style="margin-bottom:12px;">
+                    <div class="metric-label">{f.suffix.upper().strip('.')}</div>
+                    <div style="color:#e2e8f0; font-size:14px; font-weight:600;
+                                margin-bottom:4px; word-break:break-all;">
+                        {f.name}
+                    </div>
+                    <div class="metric-sub">{size_kb} KB</div>
+                </div>
+                """, unsafe_allow_html=True)
+
+    #Ingestion summary
+    st.markdown('<div class="section-header">Ingestion summary</div>',
+                unsafe_allow_html=True)
+
+    if not ingestions:
+        st.info("No ingestion events recorded yet.")
+    else:
+        ing_df = pd.DataFrame(ingestions)
+        ing_df["timestamp"] = pd.to_datetime(ing_df["timestamp"])
+
+        summary = (ing_df.groupby("source")
+                   .agg(
+                       total_chunks=("chunks",    "max"),
+                       runs=        ("source",    "count"),
+                       last_ingested=("timestamp","max"),
+                       last_status= ("status",    "last"),
+                   )
+                   .reset_index())
+
+        for _, row in summary.iterrows():
+            status_color = COLORS["green"] if row["last_status"] == "success" \
+                           else COLORS["amber"]
+            st.markdown(f"""
+            <div style="background:#0d1224; border:1px solid #1e2d5a;
+                        border-radius:10px; padding:16px; margin-bottom:10px;
+                        display:flex; justify-content:space-between; align-items:center;">
+                <div>
+                    <div style="color:#e2e8f0; font-size:13px; font-weight:600;">
+                        {Path(row['source']).name}
+                    </div>
+                    <div style="color:#4a6080; font-size:12px; margin-top:4px;">
+                        {row['source']}
+                    </div>
+                </div>
+                <div style="display:flex; gap:24px; align-items:center;">
+                    <div style="text-align:center;">
+                        <div style="color:#e2e8f0; font-size:18px; font-weight:700;">
+                            {int(row['total_chunks'])}
+                        </div>
+                        <div style="color:#4a6080; font-size:11px;">chunks</div>
+                    </div>
+                    <div style="text-align:center;">
+                        <div style="color:#e2e8f0; font-size:18px; font-weight:700;">
+                            {int(row['runs'])}
+                        </div>
+                        <div style="color:#4a6080; font-size:11px;">runs</div>
+                    </div>
+                    <div style="text-align:center;">
+                        <div style="color:{status_color}; font-size:13px; font-weight:600;">
+                            {row['last_status']}
+                        </div>
+                        <div style="color:#4a6080; font-size:11px;">
+                            {row['last_ingested'].strftime('%d %b %H:%M')}
+                        </div>
+                    </div>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+    #Full ingestion log
+    st.markdown('<div class="section-header">Full ingestion log</div>',
+                unsafe_allow_html=True)
+
+    if ingestions:
+        ing_df["timestamp"] = ing_df["timestamp"].dt.strftime("%d %b %Y %H:%M")
+        ing_df["source"]    = ing_df["source"].apply(lambda x: Path(x).name)
+        display             = ing_df[["timestamp","source","chunks","status","doc_id"]].copy()
+        display.columns     = ["Time","File","Chunks","Status","Doc ID"]
+        display["Doc ID"]   = display["Doc ID"].str[:12] + "…"
+        st.dataframe(display, use_container_width=True, hide_index=True)
