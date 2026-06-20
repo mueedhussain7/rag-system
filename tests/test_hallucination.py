@@ -84,7 +84,7 @@ def test_ask_includes_hallucination_fields():
         mock_chain.invoke.return_value = "Students used mobile devices to learn."
         mock_chain_fn.return_value = mock_chain
 
-        response = client.post("/ask", json={"source": "what did students say?"})
+        response = client.post("/ask", json={"question": "what did students say?"})
 
     assert response.status_code == 200
     data = response.json()

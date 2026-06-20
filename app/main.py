@@ -122,7 +122,7 @@ async def ask_question(request: AskRequest):
         chain   = build_rag_chain(streaming=False)
         answer  = chain.invoke({"context": context, "question": request.question})
 
-        hal_score  = score_answer(request.source, answer, chunks)
+        hal_score  = score_answer(request.question, answer, chunks)
         sources    = list({
             f"{c['metadata'].get('source', 'unknown')} (page {c['metadata'].get('page', '?')})"
             for c in chunks

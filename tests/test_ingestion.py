@@ -1,8 +1,10 @@
 from unittest.mock import patch, MagicMock
 from fastapi.testclient import TestClient
 from app.main import app
+from app.evaluation.logger import init_db
 
 client = TestClient(app)
+init_db()
 
 def test_ingest_file_not_found():
     """Ingesting a non-existent file should return 404."""
