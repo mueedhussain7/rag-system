@@ -8,7 +8,7 @@ RAG_PROMPT = ChatPromptTemplate.from_messages([
     ("system", """You are a precise, helpful assistant that answers questions \
 strictly based on the provided context.
 
-Rules that be must followed:
+Rules that must be followed:
 - Answer ONLY using information from the context below
 - If the context does not contain enough information to answer, say: \
 "I don't have enough information in the provided documents to answer this."
