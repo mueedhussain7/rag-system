@@ -36,14 +36,18 @@ def _split_sentences(text: str) -> list[str]:
 
 def check_sentence(sentence: str, context: str, llm: ChatOpenAI) -> str:
     """Classify a single sentence as entailed, contradicted, or neutral."""
-    prompt = NLI_PROMPT.format(context=context, sentence=sentence)
-    response = llm.invoke(prompt)
-    label = response.content.strip().lower()
+    try:
+        prompt = NLI_PROMPT.format(context=context, sentence=sentence)
+        response = llm.invoke(prompt)
+        label = response.content.strip().lower()
 
-    # Normalise — only accept valid labels
-    if label not in {"entailed", "contradicted", "neutral"}:
+        if label not in {"entailed", "contradicted", "neutral"}:
+            logger.warning(f"Invalid NLI label: '{label}' for sentence: {sentence[:50]}...")
+            return "neutral"
+        return label
+    except Exception:
+        logger.error(f"NLI check failed for sentence: {sentence[:50]}...", exc_info=True)
         return "neutral"
-    return label
 
 
 def nli_check(answer: str, context: str) -> dict:

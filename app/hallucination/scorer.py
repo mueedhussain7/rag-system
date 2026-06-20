@@ -34,6 +34,16 @@ def score_answer(
     Takes the question, generated answer, and retrieved chunks.
     Returns faithfulness score, NLI results, and confidence label.
     """
+    # Validate chunks exist
+    if not chunks:
+        logger.warning("No chunks provided for hallucination scoring")
+        return {
+            "faithfulness_score": -1.0,
+            "confidence_level": "unverified",
+            "nli_verdict": "unverified",
+            "nli_details": {"sentences": [], "counts": {}, "verdict": "unverified"},
+        }
+
     # Extract plain text from chunks for scoring
     contexts = [c["content"] for c in chunks]
     full_context = "\n\n".join(contexts)
