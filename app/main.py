@@ -9,7 +9,7 @@ from fastapi import FastAPI, HTTPException, Depends, Header, Request
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
@@ -53,7 +53,6 @@ async def verify_api_key(x_api_key: str = Header(None)) -> str:
 def validate_file_path(source: str) -> str:
     """Validate file path to prevent directory traversal attacks."""
     from pathlib import Path
-    import urllib.parse
 
     # Check if it's a URL
     if source.startswith(("http://", "https://")):
@@ -112,6 +111,7 @@ app = FastAPI(
     docs_url="/docs" if settings.app_env == "development" else None,
     redoc_url="/redoc" if settings.app_env == "development" else None,
     openapi_url="/openapi.json" if settings.app_env == "development" else None,
+    max_request_size=1048576,  # 1MB max request body size
 )
 
 limiter = Limiter(key_func=get_remote_address)
@@ -185,16 +185,12 @@ async def health_check():
 # ── Models ────────────────────────────────────────────────────────────────────
 
 class IngestRequest(BaseModel):
+    model_config = ConfigDict(str_max_length=2000)
     source: str
 
-    class Config:
-        max_anystr_length = 2000
-
 class AskRequest(BaseModel):
+    model_config = ConfigDict(str_max_length=5000)
     question: str
-
-    class Config:
-        max_anystr_length = 5000
 
     def __init__(self, **data):
         super().__init__(**data)
@@ -204,12 +200,10 @@ class AskRequest(BaseModel):
             raise ValueError("question exceeds maximum length of 5000 characters")
 
 class ScoreRequest(BaseModel):
+    model_config = ConfigDict(str_max_length=10000)
     question: str
     answer:   str
     context:  str
-
-    class Config:
-        max_anystr_length = 10000
 
 
 # ── Ingestion ─────────────────────────────────────────────────────────────────
@@ -332,10 +326,8 @@ async def ask_stream(request: Request, ask_req: AskRequest, api_key: str = Depen
             answer_tokens = []
 
             try:
-                async for token in asyncio.wait_for(
-                    chain.astream({"context": context, "question": ask_req.question}),
-                    timeout=settings.llm_timeout
-                ):
+                stream = chain.astream({"context": context, "question": ask_req.question})
+                async for token in stream:
                     answer_tokens.append(token)
                     yield token
             except asyncio.TimeoutError:
