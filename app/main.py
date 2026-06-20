@@ -13,7 +13,7 @@ from app.ingestion.chunker import chunk_documents
 from app.ingestion.embedder import ingest_chunks
 from app.retrieval.hybrid import hybrid_search
 from app.retrieval.context import assemble_context
-from app.generation.chain import ask, build_rag_chain
+from app.generation.chain import ask, build_rag_chain, _validate_and_truncate_context
 from app.generation.scheduler import start_scheduler, refresh_documents
 from app.hallucination.scorer import score_answer
 from app.evaluation.logger import init_db, log_query, log_ingestion, get_summary_stats
@@ -116,6 +116,7 @@ async def ask_question(request: AskRequest):
         start   = time.time()
         chunks  = hybrid_search(request.question, top_k=5)
         context = assemble_context(chunks)
+        context = _validate_and_truncate_context(context)
         chain   = build_rag_chain(streaming=False)
         answer  = chain.invoke({"context": context, "question": request.question})
 
@@ -159,6 +160,7 @@ async def ask_stream(request: AskRequest):
             start   = time.time()
             chunks  = hybrid_search(request.question, top_k=5)
             context = assemble_context(chunks)
+            context = _validate_and_truncate_context(context)
             chain   = build_rag_chain(streaming=True)
             answer_tokens = []
 
