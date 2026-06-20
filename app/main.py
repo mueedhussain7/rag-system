@@ -216,22 +216,22 @@ class ScoreRequest(BaseModel):
 
 @app.post("/ingest")
 @limiter.limit("10/minute")
-async def ingest(request: IngestRequest, api_key: str = Depends(verify_api_key), _=None):
+async def ingest(request: Request, ingest_req: IngestRequest, api_key: str = Depends(verify_api_key)):
     try:
         # Validate file path to prevent directory traversal
-        validate_file_path(request.source)
+        validate_file_path(ingest_req.source)
 
-        documents = load_document(request.source)
+        documents = load_document(ingest_req.source)
         chunks    = chunk_documents(documents)
-        result    = ingest_chunks(chunks, request.source)
+        result    = ingest_chunks(chunks, ingest_req.source)
         log_ingestion(
-            source=request.source,
+            source=ingest_req.source,
             chunks=result.get("chunks_ingested", 0),
             status=result.get("status", "unknown"),
             doc_id=result.get("doc_id", ""),
         )
-        source_type = "url" if request.source.startswith(("http://", "https://")) else "file"
-        log_source_refresh(request.source, source_type)
+        source_type = "url" if ingest_req.source.startswith(("http://", "https://")) else "file"
+        log_source_refresh(ingest_req.source, source_type)
         return result
     except FileNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -246,7 +246,7 @@ async def ingest(request: IngestRequest, api_key: str = Depends(verify_api_key),
 
 @app.get("/retrieve")
 @limiter.limit("10/minute")
-async def retrieve(q: str, top_k: int = 5, api_key: str = Depends(verify_api_key), _=None):
+async def retrieve(request: Request, q: str, top_k: int = 5, api_key: str = Depends(verify_api_key)):
     if not q or len(q.strip()) == 0:
         raise HTTPException(status_code=400, detail="query cannot be empty")
     if len(q) > 5000:
@@ -267,17 +267,17 @@ async def retrieve(q: str, top_k: int = 5, api_key: str = Depends(verify_api_key
 
 @app.post("/ask")
 @limiter.limit("10/minute")
-async def ask_question(request: AskRequest, api_key: str = Depends(verify_api_key), _=None):
+async def ask_question(request: Request, ask_req: AskRequest, api_key: str = Depends(verify_api_key)):
     try:
         start   = time.time()
-        chunks  = hybrid_search(request.question, top_k=5)
+        chunks  = hybrid_search(ask_req.question, top_k=5)
         context = assemble_context(chunks)
         context = _validate_and_truncate_context(context)
         chain   = build_rag_chain(streaming=False)
 
         try:
             answer = await asyncio.wait_for(
-                asyncio.to_thread(chain.invoke, {"context": context, "question": request.question}),
+                asyncio.to_thread(chain.invoke, {"context": context, "question": ask_req.question}),
                 timeout=settings.llm_timeout
             )
         except asyncio.TimeoutError:
@@ -286,7 +286,7 @@ async def ask_question(request: AskRequest, api_key: str = Depends(verify_api_ke
                 detail=f"LLM request timeout after {settings.llm_timeout} seconds"
             )
 
-        hal_score  = score_answer(request.question, answer, chunks)
+        hal_score  = score_answer(ask_req.question, answer, chunks)
         sources    = list({
             f"{c['metadata'].get('source', 'unknown')} (page {c['metadata'].get('page', '?')})"
             for c in chunks
@@ -294,7 +294,7 @@ async def ask_question(request: AskRequest, api_key: str = Depends(verify_api_ke
         latency_ms = round((time.time() - start) * 1000, 1)
 
         log_query(
-            question=redact_sensitive_data(request.question),
+            question=redact_sensitive_data(ask_req.question),
             answer=redact_sensitive_data(answer),
             sources=sources,
             chunks_used=len(chunks),
@@ -305,7 +305,7 @@ async def ask_question(request: AskRequest, api_key: str = Depends(verify_api_ke
         )
 
         return {
-            "question":           request.question,
+            "question":           ask_req.question,
             "answer":             answer,
             "sources":            sources,
             "chunks_used":        len(chunks),
@@ -321,11 +321,11 @@ async def ask_question(request: AskRequest, api_key: str = Depends(verify_api_ke
 
 @app.post("/ask/stream")
 @limiter.limit("10/minute")
-async def ask_stream(request: AskRequest, api_key: str = Depends(verify_api_key), _=None):
+async def ask_stream(request: Request, ask_req: AskRequest, api_key: str = Depends(verify_api_key)):
     async def token_generator():
         try:
             start   = time.time()
-            chunks  = hybrid_search(request.question, top_k=5)
+            chunks  = hybrid_search(ask_req.question, top_k=5)
             context = assemble_context(chunks)
             context = _validate_and_truncate_context(context)
             chain   = build_rag_chain(streaming=True)
@@ -333,7 +333,7 @@ async def ask_stream(request: AskRequest, api_key: str = Depends(verify_api_key)
 
             try:
                 async for token in asyncio.wait_for(
-                    chain.astream({"context": context, "question": request.question}),
+                    chain.astream({"context": context, "question": ask_req.question}),
                     timeout=settings.llm_timeout
                 ):
                     answer_tokens.append(token)
@@ -343,7 +343,7 @@ async def ask_stream(request: AskRequest, api_key: str = Depends(verify_api_key)
                 return
 
             answer = "".join(answer_tokens)
-            hal_score = score_answer(request.question, answer, chunks)
+            hal_score = score_answer(ask_req.question, answer, chunks)
             sources = list({
                 f"{c['metadata'].get('source', 'unknown')} (page {c['metadata'].get('page', '?')})"
                 for c in chunks
@@ -351,7 +351,7 @@ async def ask_stream(request: AskRequest, api_key: str = Depends(verify_api_key)
             latency_ms = round((time.time() - start) * 1000, 1)
 
             log_query(
-                question=redact_sensitive_data(request.question),
+                question=redact_sensitive_data(ask_req.question),
                 answer=redact_sensitive_data(answer),
                 sources=sources,
                 chunks_used=len(chunks),
@@ -370,10 +370,10 @@ async def ask_stream(request: AskRequest, api_key: str = Depends(verify_api_key)
 
 @app.post("/score")
 @limiter.limit("10/minute")
-async def score(request: ScoreRequest, api_key: str = Depends(verify_api_key), _=None):
+async def score(request: Request, score_req: ScoreRequest, api_key: str = Depends(verify_api_key)):
     try:
-        chunks = [{"content": request.context, "metadata": {}}]
-        result = score_answer(request.question, request.answer, chunks)
+        chunks = [{"content": score_req.context, "metadata": {}}]
+        result = score_answer(score_req.question, score_req.answer, chunks)
         return result
     except Exception as e:
         logger.error(f"Scoring failed: {e}")

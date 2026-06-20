@@ -5,6 +5,7 @@ from app.retrieval.context import assemble_context
 from app.retrieval.hybrid import reciprocal_rank_fusion
 
 client = TestClient(app)
+API_KEY_HEADER = {"X-API-Key": "rag-system-prod-key-v1"}
 
 # ── Context assembler ─────────────────────────────────────────────────────────
 
@@ -53,7 +54,7 @@ def test_retrieve_endpoint_returns_chunks():
          "score": 0.9, "method": "semantic"},
     ]
     with patch("app.main.hybrid_search", return_value=mock_chunks):
-        response = client.get("/retrieve", params={"q": "test question"})
+        response = client.get("/retrieve", params={"q": "test question"}, headers=API_KEY_HEADER)
 
     assert response.status_code == 200
     data = response.json()
@@ -65,7 +66,7 @@ def test_retrieve_endpoint_returns_chunks():
 def test_retrieve_endpoint_empty_query():
     """/retrieve with empty results should still return a valid response."""
     with patch("app.main.hybrid_search", return_value=[]):
-        response = client.get("/retrieve", params={"q": "unknown topic"})
+        response = client.get("/retrieve", params={"q": "unknown topic"}, headers=API_KEY_HEADER)
 
     assert response.status_code == 200
     assert response.json()["total"] == 0
