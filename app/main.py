@@ -189,8 +189,8 @@ async def ask_stream(request: AskRequest):
                 latency_ms=latency_ms,
             )
         except Exception as e:
-            logger.error(f"Streaming failed: {e}")
-            yield f"\n[Error: {e}]"
+            logger.error(f"Streaming failed: {e}", exc_info=True)
+            yield f"\n[Error: {type(e).__name__}: {str(e)}]"
     return StreamingResponse(token_generator(), media_type="text/plain")
 
 

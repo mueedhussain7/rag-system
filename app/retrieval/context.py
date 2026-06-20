@@ -8,8 +8,9 @@ def assemble_context(chunks: list[dict]) -> str:
     parts = []
     for i, chunk in enumerate(chunks, 1):
         source = chunk["metadata"].get("source", "unknown")
-        page   = chunk["metadata"].get("page",   "?")
+        page = chunk["metadata"].get("page")
+        source_label = f"{source} (page {page})" if page and page != "?" else source
         parts.append(
-            f"[{i}] Source: {source} (page {page})\n{chunk['content']}"
+            f"[{i}] Source: {source_label}\n{chunk['content']}"
         )
     return "\n\n---\n\n".join(parts)
