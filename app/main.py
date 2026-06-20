@@ -4,9 +4,12 @@ os.environ.setdefault("USER_AGENT", "rag-system/0.1.0")
 import time
 import logging
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException, Depends, Header
+from fastapi import FastAPI, HTTPException, Depends, Header, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 from app.config import settings
 from app.ingestion.loaders import load_document
 from app.ingestion.chunker import chunk_documents
@@ -62,6 +65,17 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
+
+@app.exception_handler(RateLimitExceeded)
+async def rate_limit_handler(request: Request, exc: RateLimitExceeded):
+    return StreamingResponse(
+        iter([f"Rate limit exceeded: {exc.detail}".encode()]),
+        status_code=429,
+        media_type="text/plain"
+    )
+
 
 # ── Health ────────────────────────────────────────────────────────────────────
 
@@ -91,7 +105,8 @@ class ScoreRequest(BaseModel):
 # ── Ingestion ─────────────────────────────────────────────────────────────────
 
 @app.post("/ingest")
-async def ingest(request: IngestRequest, api_key: str = Depends(verify_api_key)):
+@limiter.limit("10/minute")
+async def ingest(request: IngestRequest, api_key: str = Depends(verify_api_key), _=None):
     try:
         documents = load_document(request.source)
         chunks    = chunk_documents(documents)
@@ -130,7 +145,8 @@ async def retrieve(q: str, top_k: int = 5):
 # ── Generation ────────────────────────────────────────────────────────────────
 
 @app.post("/ask")
-async def ask_question(request: AskRequest, api_key: str = Depends(verify_api_key)):
+@limiter.limit("10/minute")
+async def ask_question(request: AskRequest, api_key: str = Depends(verify_api_key), _=None):
     try:
         start   = time.time()
         chunks  = hybrid_search(request.question, top_k=5)
@@ -173,7 +189,8 @@ async def ask_question(request: AskRequest, api_key: str = Depends(verify_api_ke
 
 
 @app.post("/ask/stream")
-async def ask_stream(request: AskRequest, api_key: str = Depends(verify_api_key)):
+@limiter.limit("10/minute")
+async def ask_stream(request: AskRequest, api_key: str = Depends(verify_api_key), _=None):
     async def token_generator():
         try:
             start   = time.time()
@@ -214,7 +231,8 @@ async def ask_stream(request: AskRequest, api_key: str = Depends(verify_api_key)
 # ── Hallucination scoring ─────────────────────────────────────────────────────
 
 @app.post("/score")
-async def score(request: ScoreRequest, api_key: str = Depends(verify_api_key)):
+@limiter.limit("10/minute")
+async def score(request: ScoreRequest, api_key: str = Depends(verify_api_key), _=None):
     try:
         chunks = [{"content": request.context, "metadata": {}}]
         result = score_answer(request.question, request.answer, chunks)
