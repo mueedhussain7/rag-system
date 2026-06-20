@@ -19,6 +19,9 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     user_agent: str = "rag-system/0.1.0"
 
+    # ── API Security ─────────────────────────────────────────
+    api_key: str = "demo-key-change-in-production"
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

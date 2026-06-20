@@ -4,18 +4,19 @@ from app.main import app
 from app.evaluation.logger import init_db
 
 client = TestClient(app)
+API_KEY_HEADER = {"X-API-Key": "rag-system-prod-key-v1"}
 init_db()
 
 def test_ingest_file_not_found():
     """Ingesting a non-existent file should return 404."""
-    response = client.post("/ingest", json={"source": "data/documents/nonexistent.pdf"})
+    response = client.post("/ingest", json={"source": "data/documents/nonexistent.pdf"}, headers=API_KEY_HEADER)
     assert response.status_code == 404
     assert "not found" in response.json()["detail"].lower()
 
 def test_ingest_unsupported_file_type():
     """Ingesting an unsupported file type should return 400."""
     with patch("app.ingestion.loaders.Path.exists", return_value=True):
-        response = client.post("/ingest", json={"source": "data/documents/file.csv"})
+        response = client.post("/ingest", json={"source": "data/documents/file.csv"}, headers=API_KEY_HEADER)
     assert response.status_code == 400
     assert "unsupported" in response.json()["detail"].lower()
 
@@ -34,7 +35,7 @@ def test_ingest_success():
             "doc_id": "abc123"
         }
 
-        response = client.post("/ingest", json={"source": "data/documents/test.pdf"})
+        response = client.post("/ingest", json={"source": "data/documents/test.pdf"}, headers=API_KEY_HEADER)
         assert response.status_code == 200
         data = response.json()
         assert data["status"] == "success"
@@ -55,6 +56,6 @@ def test_ingest_duplicate():
             "source": "data/documents/test.pdf"
         }
 
-        response = client.post("/ingest", json={"source": "data/documents/test.pdf"})
+        response = client.post("/ingest", json={"source": "data/documents/test.pdf"}, headers=API_KEY_HEADER)
         assert response.status_code == 200
         assert response.json()["status"] == "skipped"

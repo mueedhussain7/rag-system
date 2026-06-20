@@ -4,7 +4,7 @@ os.environ.setdefault("USER_AGENT", "rag-system/0.1.0")
 import time
 import logging
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends, Header
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from app.config import settings
@@ -25,6 +25,23 @@ logging.basicConfig(
     format="%(asctime)s | %(levelname)s | %(name)s | %(message)s"
 )
 logger = logging.getLogger(__name__)
+
+
+# ── API Key Authentication ────────────────────────────────────
+
+async def verify_api_key(x_api_key: str = Header(None)) -> str:
+    """Verify client provides valid API key in X-API-Key header"""
+    if not x_api_key:
+        raise HTTPException(
+            status_code=401,
+            detail="Missing X-API-Key header"
+        )
+    if x_api_key != settings.api_key:
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid API key"
+        )
+    return x_api_key
 
 
 @asynccontextmanager
@@ -74,7 +91,7 @@ class ScoreRequest(BaseModel):
 # ── Ingestion ─────────────────────────────────────────────────────────────────
 
 @app.post("/ingest")
-async def ingest(request: IngestRequest):
+async def ingest(request: IngestRequest, api_key: str = Depends(verify_api_key)):
     try:
         documents = load_document(request.source)
         chunks    = chunk_documents(documents)
@@ -113,7 +130,7 @@ async def retrieve(q: str, top_k: int = 5):
 # ── Generation ────────────────────────────────────────────────────────────────
 
 @app.post("/ask")
-async def ask_question(request: AskRequest):
+async def ask_question(request: AskRequest, api_key: str = Depends(verify_api_key)):
     try:
         start   = time.time()
         chunks  = hybrid_search(request.question, top_k=5)
@@ -156,7 +173,7 @@ async def ask_question(request: AskRequest):
 
 
 @app.post("/ask/stream")
-async def ask_stream(request: AskRequest):
+async def ask_stream(request: AskRequest, api_key: str = Depends(verify_api_key)):
     async def token_generator():
         try:
             start   = time.time()
@@ -197,7 +214,7 @@ async def ask_stream(request: AskRequest):
 # ── Hallucination scoring ─────────────────────────────────────────────────────
 
 @app.post("/score")
-async def score(request: ScoreRequest):
+async def score(request: ScoreRequest, api_key: str = Depends(verify_api_key)):
     try:
         chunks = [{"content": request.context, "metadata": {}}]
         result = score_answer(request.question, request.answer, chunks)

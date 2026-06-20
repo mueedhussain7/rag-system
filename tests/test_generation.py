@@ -4,6 +4,7 @@ from app.main import app
 from app.generation.prompt import RAG_PROMPT
 
 client = TestClient(app)
+API_KEY_HEADER = {"X-API-Key": "rag-system-prod-key-v1"}
 
 # ── Prompt template ───────────────────────────────────────────────────────────
 
@@ -41,7 +42,7 @@ def test_ask_returns_answer_and_sources():
         mock_chain = MagicMock()
         mock_chain.invoke.return_value = "This paper is about mobile learning."
         mock_chain_fn.return_value = mock_chain
-        response = client.post("/ask", json={"question": "what is this about?"})
+        response = client.post("/ask", json={"question": "what is this about?"}, headers=API_KEY_HEADER)
 
     assert response.status_code == 200
     data = response.json()
@@ -53,7 +54,7 @@ def test_ask_returns_answer_and_sources():
 def test_ask_returns_500_on_failure():
     """/ask should return 500 if generation fails."""
     with patch("app.main.hybrid_search", side_effect=Exception("search error")):
-        response = client.post("/ask", json={"question": "test question"})
+        response = client.post("/ask", json={"question": "test question"}, headers=API_KEY_HEADER)
     assert response.status_code == 500
 
 # ── /ask/stream endpoint ──────────────────────────────────────────────────────
@@ -74,7 +75,7 @@ def test_ask_stream_returns_text():
 
     with patch("app.main.hybrid_search", return_value=mock_chunks), \
          patch("app.main.build_rag_chain", return_value=mock_chain):
-        response = client.post("/ask/stream", json={"question": "what is this about?"})
+        response = client.post("/ask/stream", json={"question": "what is this about?"}, headers=API_KEY_HEADER)
 
     assert response.status_code == 200
     assert "mobile" in response.text.lower() or len(response.text) > 0

@@ -4,6 +4,7 @@ from app.main import app
 from app.hallucination.scorer import get_confidence_label
 
 client = TestClient(app)
+API_KEY_HEADER = {"X-API-Key": "rag-system-prod-key-v1"}
 
 # ── Confidence label logic ────────────────────────────────────────────────────
 
@@ -41,7 +42,7 @@ def test_score_endpoint_returns_all_fields():
             "question": "What is RAG?",
             "answer":   "RAG stands for Retrieval-Augmented Generation.",
             "context":  "RAG stands for Retrieval-Augmented Generation.",
-        })
+        }, headers=API_KEY_HEADER)
 
     assert response.status_code == 200
     data = response.json()
@@ -56,7 +57,7 @@ def test_score_endpoint_500_on_failure():
             "question": "test",
             "answer":   "test",
             "context":  "test",
-        })
+        }, headers=API_KEY_HEADER)
     assert response.status_code == 500
 
 # ── /ask now includes hallucination fields ────────────────────────────────────
@@ -84,7 +85,7 @@ def test_ask_includes_hallucination_fields():
         mock_chain.invoke.return_value = "Students used mobile devices to learn."
         mock_chain_fn.return_value = mock_chain
 
-        response = client.post("/ask", json={"question": "what did students say?"})
+        response = client.post("/ask", json={"question": "what did students say?"}, headers=API_KEY_HEADER)
 
     assert response.status_code == 200
     data = response.json()
