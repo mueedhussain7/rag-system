@@ -62,6 +62,9 @@ async def health_check():
 class IngestRequest(BaseModel):
     source: str
 
+class AskRequest(BaseModel):
+    question: str
+
 class ScoreRequest(BaseModel):
     question: str
     answer:   str
@@ -108,13 +111,13 @@ async def retrieve(q: str, top_k: int = 5):
 # ── Generation ────────────────────────────────────────────────────────────────
 
 @app.post("/ask")
-async def ask_question(request: IngestRequest):
+async def ask_question(request: AskRequest):
     try:
         start   = time.time()
-        chunks  = hybrid_search(request.source, top_k=5)
+        chunks  = hybrid_search(request.question, top_k=5)
         context = assemble_context(chunks)
         chain   = build_rag_chain(streaming=False)
-        answer  = chain.invoke({"context": context, "question": request.source})
+        answer  = chain.invoke({"context": context, "question": request.question})
 
         hal_score  = score_answer(request.source, answer, chunks)
         sources    = list({
@@ -124,7 +127,7 @@ async def ask_question(request: IngestRequest):
         latency_ms = round((time.time() - start) * 1000, 1)
 
         log_query(
-            question=request.source,
+            question=request.question,
             answer=answer,
             sources=sources,
             chunks_used=len(chunks),
@@ -135,7 +138,7 @@ async def ask_question(request: IngestRequest):
         )
 
         return {
-            "question":           request.source,
+            "question":           request.question,
             "answer":             answer,
             "sources":            sources,
             "chunks_used":        len(chunks),
@@ -150,14 +153,37 @@ async def ask_question(request: IngestRequest):
 
 
 @app.post("/ask/stream")
-async def ask_stream(request: IngestRequest):
+async def ask_stream(request: AskRequest):
     async def token_generator():
         try:
-            chunks  = hybrid_search(request.source, top_k=5)
+            start   = time.time()
+            chunks  = hybrid_search(request.question, top_k=5)
             context = assemble_context(chunks)
             chain   = build_rag_chain(streaming=True)
-            async for token in chain.astream({"context": context, "question": request.source}):
+            answer_tokens = []
+
+            async for token in chain.astream({"context": context, "question": request.question}):
+                answer_tokens.append(token)
                 yield token
+
+            answer = "".join(answer_tokens)
+            hal_score = score_answer(request.question, answer, chunks)
+            sources = list({
+                f"{c['metadata'].get('source', 'unknown')} (page {c['metadata'].get('page', '?')})"
+                for c in chunks
+            })
+            latency_ms = round((time.time() - start) * 1000, 1)
+
+            log_query(
+                question=request.question,
+                answer=answer,
+                sources=sources,
+                chunks_used=len(chunks),
+                faithfulness_score=hal_score["faithfulness_score"],
+                confidence_level=hal_score["confidence_level"],
+                nli_verdict=hal_score["nli_verdict"],
+                latency_ms=latency_ms,
+            )
         except Exception as e:
             logger.error(f"Streaming failed: {e}")
             yield f"\n[Error: {e}]"
