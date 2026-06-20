@@ -35,23 +35,42 @@ def get_vector_store() -> Chroma:
         )
     return _store
 
-def document_hash(source: str) -> str:
-    """Unique fingerprint for a source — used for duplicate detection."""
-    return hashlib.md5(source.encode()).hexdigest()
+def document_hash(source: str, content_hash: str = "") -> str:
+    """
+    Create unique fingerprint combining source path and content.
+    If content_hash provided, uses it; otherwise just uses source.
+    This allows detecting when document content changes.
+    """
+    combined = f"{source}:{content_hash}"
+    return hashlib.md5(combined.encode()).hexdigest()
+
+
+def compute_content_hash(chunks: list) -> str:
+    """Compute hash of all chunk content combined."""
+    content = "".join([c.page_content for c in chunks])
+    return hashlib.md5(content.encode()).hexdigest()
 
 def ingest_chunks(chunks: list[Document], source: str) -> dict:
     """
     Embed chunks and store them in ChromaDB.
-    Skips ingestion if the source was already ingested.
+    Skips ingestion only if the exact same document (source + content) was already ingested.
+    If content changed, re-ingests and replaces old version.
     """
     store = get_vector_store()
-    doc_id = document_hash(source)
+    content_hash = compute_content_hash(chunks)
+    doc_id = document_hash(source, content_hash)
 
-    # Duplicate detection
+    # Check if this exact version already exists
     existing = store.get(where={"doc_id": doc_id})
     if existing and existing["ids"]:
-        logger.info(f"Skipping duplicate: {source} already in ChromaDB")
+        logger.info(f"Skipping duplicate: {source} (content unchanged) already in ChromaDB")
         return {"status": "skipped", "reason": "already ingested", "source": source}
+
+    # If source exists but with different content, delete old version
+    old_docs = store.get(where={"source": source})
+    if old_docs and old_docs["ids"]:
+        logger.info(f"Removing outdated version of {source}")
+        store.delete(ids=old_docs["ids"])
 
     # Attach metadata to every chunk
     for i, chunk in enumerate(chunks):
