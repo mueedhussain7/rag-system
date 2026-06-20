@@ -16,7 +16,7 @@ from app.retrieval.context import assemble_context
 from app.generation.chain import ask, build_rag_chain, _validate_and_truncate_context
 from app.generation.scheduler import start_scheduler, refresh_documents
 from app.hallucination.scorer import score_answer
-from app.evaluation.logger import init_db, log_query, log_ingestion, get_summary_stats
+from app.evaluation.logger import init_db, log_query, log_ingestion, get_summary_stats, log_source_refresh
 
 
 
@@ -85,6 +85,8 @@ async def ingest(request: IngestRequest):
             status=result.get("status", "unknown"),
             doc_id=result.get("doc_id", ""),
         )
+        source_type = "url" if request.source.startswith(("http://", "https://")) else "file"
+        log_source_refresh(request.source, source_type)
         return result
     except FileNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))

@@ -48,6 +48,14 @@ def init_db():
                 doc_id        TEXT
             )
         """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS source_refresh_log (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                source          TEXT    UNIQUE NOT NULL,
+                last_refresh    TEXT    NOT NULL,
+                source_type     TEXT    NOT NULL
+            )
+        """)
         conn.commit()
     logger.info("Database initialised")
 
@@ -146,3 +154,25 @@ def get_summary_stats() -> dict:
         "avg_latency_ms":     round(avg_latency, 1) if avg_latency else 0.0,
         "confidence_counts":  {row[0]: row[1] for row in confidence_counts},
     }
+
+
+def log_source_refresh(source: str, source_type: str = "url"):
+    """Log when a source was last refreshed (for tracking URL updates)."""
+    with get_connection() as conn:
+        conn.execute("""
+            INSERT OR REPLACE INTO source_refresh_log (source, last_refresh, source_type)
+            VALUES (?, ?, ?)
+        """, (source, datetime.now(timezone.utc).isoformat(), source_type))
+        conn.commit()
+
+
+def get_sources_needing_refresh(hours_since_refresh: int = 24) -> list[str]:
+    """Get sources that haven't been refreshed in the last N hours."""
+    from datetime import timedelta
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours_since_refresh)).isoformat()
+    with get_connection() as conn:
+        rows = conn.execute("""
+            SELECT source FROM source_refresh_log
+            WHERE last_refresh < ? OR last_refresh IS NULL
+        """, (cutoff,)).fetchall()
+    return [row[0] for row in rows]
