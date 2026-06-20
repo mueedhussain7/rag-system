@@ -32,6 +32,19 @@ Logged to SQLite → visible on Streamlit evaluation dashboard
 - **Evaluation dashboard** — Streamlit UI showing faithfulness trends, hallucination rates, latency distributions, and full query history
 - **SQLite logging** — every query, answer, score, and ingestion event is persisted for analysis
 
+### Security features
+
+- **API Key Authentication** — all sensitive endpoints require X-API-Key header
+- **Rate limiting** — 10 requests/minute per IP to prevent brute force and DOS attacks
+- **Input validation** — max 5000 characters per question, prevents large payload attacks
+- **Request timeouts** — 30s LLM timeout, 10s retrieval timeout (prevents server hanging)
+- **PII redaction** — credit cards, SSNs, emails, phone numbers automatically masked before logging
+- **CORS protection** — restricts cross-origin requests to authorized domains
+- **File path validation** — prevents directory traversal attacks
+- **Security headers** — X-Frame-Options, HSTS, CSP, X-Content-Type-Options for browser protection
+- **HTTPS enforcement** — production environment requires encrypted connections
+- **Request size limits** — max 1MB payload to prevent DOS attacks
+
 ---
 
 ## Tech stack
@@ -143,21 +156,32 @@ The dashboard opens at `http://localhost:8501`.
 
 ## API reference
 
-| Method | Endpoint | Description |
-|---|---|---|
-| `GET` | `/health` | Server health check |
-| `POST` | `/ingest` | Ingest a document (PDF, txt, or URL) |
-| `GET` | `/retrieve` | Retrieve top-k chunks for a query |
-| `POST` | `/ask` | Generate a grounded, cited, scored answer |
-| `POST` | `/ask/stream` | Same as `/ask` but streams tokens |
-| `POST` | `/score` | Score any answer for hallucination risk |
-| `GET` | `/metrics` | Current system health metrics as JSON |
+| Method | Endpoint | Auth Required | Rate Limited | Description |
+|---|---|---|---|---|
+| `GET` | `/health` | ❌ No | ❌ No | Server health check |
+| `POST` | `/ingest` | ✅ Yes | ✅ 10/min | Ingest a document (PDF, txt, or URL) |
+| `GET` | `/retrieve` | ✅ Yes | ✅ 10/min | Retrieve top-k chunks for a query |
+| `POST` | `/ask` | ✅ Yes | ✅ 10/min | Generate a grounded, cited, scored answer |
+| `POST` | `/ask/stream` | ✅ Yes | ✅ 10/min | Same as `/ask` but streams tokens |
+| `POST` | `/score` | ✅ Yes | ✅ 10/min | Score any answer for hallucination risk |
+| `GET` | `/metrics` | ❌ No | ❌ No | Current system health metrics as JSON |
+
+### Authentication
+
+All protected endpoints require an `X-API-Key` header:
+
+```bash
+-H "X-API-Key: rag-system-prod-key-v1"
+```
+
+Change the API key in your `.env` file for production.
 
 ### Example: ingest a document
 
 ```bash
 curl -X POST http://localhost:8000/ingest \
   -H "Content-Type: application/json" \
+  -H "X-API-Key: rag-system-prod-key-v1" \
   -d '{"source": "data/documents/my_paper.pdf"}'
 ```
 
@@ -166,7 +190,8 @@ curl -X POST http://localhost:8000/ingest \
 ```bash
 curl -X POST http://localhost:8000/ask \
   -H "Content-Type: application/json" \
-  -d '{"source": "What are the main findings of the study?"}'
+  -H "X-API-Key: rag-system-prod-key-v1" \
+  -d '{"question": "What are the main findings of the study?"}'
 ```
 
 Response:
@@ -213,17 +238,38 @@ All 29 tests should pass with 0 warnings.
 Copy `.env.example` to `.env` and fill in your values:
 
 ```bash
+# OpenAI configuration
 OPENAI_API_KEY=sk-your-key-here
 EMBEDDING_MODEL=text-embedding-3-small
+
+# Vector database
 CHROMA_DB_PATH=./chroma_db
 CHROMA_COLLECTION_NAME=rag_documents
+
+# Document processing
 CHUNK_SIZE=500
 CHUNK_OVERLAP=50
+
+# Application
 APP_ENV=development
 APP_VERSION=0.1.0
 LOG_LEVEL=INFO
 USER_AGENT=rag-system/0.1.0
+
+# Security
+API_KEY=rag-system-prod-key-v1  # Change this for production
+
+# Timeouts (seconds)
+LLM_TIMEOUT=30
+RETRIEVAL_TIMEOUT=10
 ```
+
+### Security notes
+
+- Change `API_KEY` to a strong random string in production
+- Set `APP_ENV=production` to enable HTTPS enforcement and disable Swagger docs
+- Store secrets in a secure vault (AWS Secrets Manager, HashiCorp Vault) instead of `.env` for production
+- Your OpenAI API key is already exposed in git history if you've committed `.env` before — rotate it immediately
 
 ## Design decisions
 
