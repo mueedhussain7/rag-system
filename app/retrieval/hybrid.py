@@ -23,16 +23,16 @@ def reciprocal_rank_fusion(
     scores: dict[str, dict] = {}
 
     for rank, result in enumerate(semantic_results):
-        key = result["content"][:100]  # use first 100 chars as unique key
-        if key not in scores:
-            scores[key] = {"data": result, "rrf_score": 0.0}
-        scores[key]["rrf_score"] += 1.0 / (rank + k)
+        chunk_id = result["metadata"].get("chunk_index", result["content"][:50])
+        if chunk_id not in scores:
+            scores[chunk_id] = {"data": result, "rrf_score": 0.0}
+        scores[chunk_id]["rrf_score"] += 1.0 / (rank + k)
 
     for rank, result in enumerate(keyword_results):
-        key = result["content"][:100]
-        if key not in scores:
-            scores[key] = {"data": result, "rrf_score": 0.0}
-        scores[key]["rrf_score"] += 1.0 / (rank + k)
+        chunk_id = result["metadata"].get("chunk_index", result["content"][:50])
+        if chunk_id not in scores:
+            scores[chunk_id] = {"data": result, "rrf_score": 0.0}
+        scores[chunk_id]["rrf_score"] += 1.0 / (rank + k)
 
     # Sort by combined RRF score
     sorted_results = sorted(
