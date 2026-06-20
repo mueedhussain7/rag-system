@@ -1,14 +1,15 @@
 import logging
+import re
 from langchain_openai import ChatOpenAI
 from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-NLI_PROMPT = """You are a precise fact-checker. 
+NLI_PROMPT = """You are a precise fact-checker.
 
 Given a CONTEXT and a SENTENCE, classify the sentence as one of:
 - "entailed"     → the context clearly supports this sentence
-- "contradicted" → the context clearly contradicts this sentence  
+- "contradicted" → the context clearly contradicts this sentence
 - "neutral"      → the context neither supports nor contradicts this sentence
 
 Reply with ONLY one word: entailed, contradicted, or neutral.
@@ -18,6 +19,19 @@ CONTEXT:
 
 SENTENCE:
 {sentence}"""
+
+
+def _split_sentences(text: str) -> list[str]:
+    """
+    Split text into sentences, handling common cases like abbreviations.
+    Works with periods, question marks, and exclamation marks.
+    """
+    text = text.strip()
+    if not text:
+        return []
+
+    sentences = re.split(r'(?<=[.!?])\s+', text)
+    return [s.strip() for s in sentences if s.strip()]
 
 
 def check_sentence(sentence: str, context: str, llm: ChatOpenAI) -> str:
@@ -47,8 +61,8 @@ def nli_check(answer: str, context: str) -> dict:
         openai_api_key=settings.openai_api_key,
     )
 
-    # Split answer into sentences — simple split on ". "
-    sentences = [s.strip() for s in answer.replace("?\n", "? ").split(". ") if s.strip()]
+    # Split answer into sentences
+    sentences = _split_sentences(answer)
 
     results = []
     for sentence in sentences:
