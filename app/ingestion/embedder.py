@@ -8,20 +8,32 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
+_embeddings = None
+_store = None
+
+def _get_embeddings() -> OpenAIEmbeddings:
+    """Returns cached embeddings instance."""
+    global _embeddings
+    if _embeddings is None:
+        _embeddings = OpenAIEmbeddings(
+            model=settings.embedding_model,
+            openai_api_key=settings.openai_api_key,
+        )
+    return _embeddings
+
 def get_vector_store() -> Chroma:
     """
-    Returns a ChromaDB vector store instance.
+    Returns a cached ChromaDB vector store instance.
     Creates the collection if it doesn't exist yet.
     """
-    embeddings = OpenAIEmbeddings(
-        model=settings.embedding_model,
-        openai_api_key=settings.openai_api_key,
-    )
-    return Chroma(
-        collection_name=settings.chroma_collection_name,
-        embedding_function=embeddings,
-        persist_directory=settings.chroma_db_path,
-    )
+    global _store
+    if _store is None:
+        _store = Chroma(
+            collection_name=settings.chroma_collection_name,
+            embedding_function=_get_embeddings(),
+            persist_directory=settings.chroma_db_path,
+        )
+    return _store
 
 def document_hash(source: str) -> str:
     """Unique fingerprint for a source — used for duplicate detection."""
