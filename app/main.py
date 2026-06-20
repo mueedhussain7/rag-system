@@ -6,6 +6,7 @@ import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Depends, Header, Request
 from fastapi.responses import StreamingResponse
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from pydantic import BaseModel
 from slowapi import Limiter
 from slowapi.util import get_remote_address
@@ -68,6 +69,13 @@ app = FastAPI(
 limiter = Limiter(key_func=get_remote_address)
 app.state.limiter = limiter
 
+# Trusted host middleware (protects against Host header attacks)
+if settings.app_env == "production":
+    app.add_middleware(
+        TrustedHostMiddleware,
+        allowed_hosts=["*"],  # Change to your domain in production
+    )
+
 @app.exception_handler(RateLimitExceeded)
 async def rate_limit_handler(request: Request, exc: RateLimitExceeded):
     return StreamingResponse(
@@ -75,6 +83,17 @@ async def rate_limit_handler(request: Request, exc: RateLimitExceeded):
         status_code=429,
         media_type="text/plain"
     )
+
+@app.middleware("http")
+async def enforce_https(request: Request, call_next):
+    """In production, enforce HTTPS by rejecting HTTP requests."""
+    if settings.app_env == "production" and request.url.scheme == "http":
+        return StreamingResponse(
+            iter(["HTTPS required in production".encode()]),
+            status_code=400,
+            media_type="text/plain"
+        )
+    return await call_next(request)
 
 
 # ── Health ────────────────────────────────────────────────────────────────────
@@ -93,13 +112,29 @@ async def health_check():
 class IngestRequest(BaseModel):
     source: str
 
+    class Config:
+        max_anystr_length = 2000
+
 class AskRequest(BaseModel):
     question: str
+
+    class Config:
+        max_anystr_length = 5000
+
+    def __init__(self, **data):
+        super().__init__(**data)
+        if not self.question or len(self.question.strip()) == 0:
+            raise ValueError("question cannot be empty")
+        if len(self.question) > 5000:
+            raise ValueError("question exceeds maximum length of 5000 characters")
 
 class ScoreRequest(BaseModel):
     question: str
     answer:   str
     context:  str
+
+    class Config:
+        max_anystr_length = 10000
 
 
 # ── Ingestion ─────────────────────────────────────────────────────────────────
@@ -132,7 +167,15 @@ async def ingest(request: IngestRequest, api_key: str = Depends(verify_api_key),
 # ── Retrieval ─────────────────────────────────────────────────────────────────
 
 @app.get("/retrieve")
-async def retrieve(q: str, top_k: int = 5):
+@limiter.limit("10/minute")
+async def retrieve(q: str, top_k: int = 5, api_key: str = Depends(verify_api_key), _=None):
+    if not q or len(q.strip()) == 0:
+        raise HTTPException(status_code=400, detail="query cannot be empty")
+    if len(q) > 5000:
+        raise HTTPException(status_code=400, detail="query exceeds maximum length of 5000 characters")
+    if top_k < 1 or top_k > 20:
+        raise HTTPException(status_code=400, detail="top_k must be between 1 and 20")
+
     try:
         chunks  = hybrid_search(q, top_k=top_k)
         context = assemble_context(chunks)
