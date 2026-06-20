@@ -1,4 +1,5 @@
 import logging
+import re
 from rank_bm25 import BM25Okapi
 from langchain_chroma import Chroma
 from langchain_openai import OpenAIEmbeddings
@@ -30,6 +31,14 @@ def _get_store() -> Chroma:
         )
     return _store
 
+
+def _tokenize(text: str) -> list[str]:
+    """Tokenize text by removing punctuation and converting to lowercase."""
+    text = text.lower()
+    text = re.sub(r'[^\w\s]', ' ', text)
+    return [word for word in text.split() if word]
+
+
 def keyword_search(query: str, k: int = 20) -> list[dict]:
     """
     BM25 keyword search over all chunks in ChromaDB.
@@ -53,12 +62,12 @@ def keyword_search(query: str, k: int = 20) -> list[dict]:
     documents = all_docs["documents"]
     metadatas = all_docs["metadatas"]
 
-    # Tokenise each chunk into words for BM25
-    tokenised = [doc.lower().split() for doc in documents]
-    bm25 = BM25Okapi(tokenised)
+    # Tokenize each chunk with proper punctuation handling
+    tokenized = [_tokenize(doc) for doc in documents]
+    bm25 = BM25Okapi(tokenized)
 
     # Score every chunk against the query
-    query_tokens = query.lower().split()
+    query_tokens = _tokenize(query)
     scores = bm25.get_scores(query_tokens)
 
     # Pair each chunk with its score and sort — highest first
