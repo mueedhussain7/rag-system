@@ -3,10 +3,12 @@ os.environ.setdefault("USER_AGENT", "rag-system/0.1.0")
 
 import time
 import logging
+import asyncio
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Depends, Header, Request
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from slowapi import Limiter
 from slowapi.util import get_remote_address
@@ -48,6 +50,26 @@ async def verify_api_key(x_api_key: str = Header(None)) -> str:
     return x_api_key
 
 
+def redact_sensitive_data(text: str) -> str:
+    """Redact PII and sensitive patterns from text before logging."""
+    import re
+    if not text:
+        return text
+
+    # Redact credit card numbers (16 digits)
+    text = re.sub(r'\b\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}\b', '[REDACTED_CC]', text)
+    # Redact SSN (XXX-XX-XXXX)
+    text = re.sub(r'\b\d{3}-\d{2}-\d{4}\b', '[REDACTED_SSN]', text)
+    # Redact email addresses
+    text = re.sub(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b', '[REDACTED_EMAIL]', text)
+    # Redact phone numbers (XXX-XXX-XXXX or (XXX) XXX-XXXX)
+    text = re.sub(r'\b\d{3}[-.]?\d{3}[-.]?\d{4}\b', '[REDACTED_PHONE]', text)
+    # Redact API keys (sk-, api_, etc.)
+    text = re.sub(r'(sk-|api-|key[_-])[A-Za-z0-9_\-]{20,}', '[REDACTED_API_KEY]', text)
+
+    return text
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info(f"RAG System starting | env={settings.app_env} | v={settings.app_version}")
@@ -69,11 +91,26 @@ app = FastAPI(
 limiter = Limiter(key_func=get_remote_address)
 app.state.limiter = limiter
 
+# CORS middleware (restrict cross-origin requests)
+allowed_origins = (
+    ["http://localhost:3000", "http://localhost:8501"]  # dev: React + Streamlit
+    if settings.app_env == "development"
+    else ["https://yourdomain.com"]  # prod: update with real domain
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=allowed_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 # Trusted host middleware (protects against Host header attacks)
 if settings.app_env == "production":
     app.add_middleware(
         TrustedHostMiddleware,
-        allowed_hosts=["*"],  # Change to your domain in production
+        allowed_hosts=["yourdomain.com"],  # Change to your domain in production
     )
 
 @app.exception_handler(RateLimitExceeded)
@@ -196,7 +233,17 @@ async def ask_question(request: AskRequest, api_key: str = Depends(verify_api_ke
         context = assemble_context(chunks)
         context = _validate_and_truncate_context(context)
         chain   = build_rag_chain(streaming=False)
-        answer  = chain.invoke({"context": context, "question": request.question})
+
+        try:
+            answer = await asyncio.wait_for(
+                asyncio.to_thread(chain.invoke, {"context": context, "question": request.question}),
+                timeout=settings.llm_timeout
+            )
+        except asyncio.TimeoutError:
+            raise HTTPException(
+                status_code=504,
+                detail=f"LLM request timeout after {settings.llm_timeout} seconds"
+            )
 
         hal_score  = score_answer(request.question, answer, chunks)
         sources    = list({
@@ -206,8 +253,8 @@ async def ask_question(request: AskRequest, api_key: str = Depends(verify_api_ke
         latency_ms = round((time.time() - start) * 1000, 1)
 
         log_query(
-            question=request.question,
-            answer=answer,
+            question=redact_sensitive_data(request.question),
+            answer=redact_sensitive_data(answer),
             sources=sources,
             chunks_used=len(chunks),
             faithfulness_score=hal_score["faithfulness_score"],
@@ -243,9 +290,16 @@ async def ask_stream(request: AskRequest, api_key: str = Depends(verify_api_key)
             chain   = build_rag_chain(streaming=True)
             answer_tokens = []
 
-            async for token in chain.astream({"context": context, "question": request.question}):
-                answer_tokens.append(token)
-                yield token
+            try:
+                async for token in asyncio.wait_for(
+                    chain.astream({"context": context, "question": request.question}),
+                    timeout=settings.llm_timeout
+                ):
+                    answer_tokens.append(token)
+                    yield token
+            except asyncio.TimeoutError:
+                yield f"\n[Error: LLM request timeout after {settings.llm_timeout} seconds]"
+                return
 
             answer = "".join(answer_tokens)
             hal_score = score_answer(request.question, answer, chunks)
@@ -256,8 +310,8 @@ async def ask_stream(request: AskRequest, api_key: str = Depends(verify_api_key)
             latency_ms = round((time.time() - start) * 1000, 1)
 
             log_query(
-                question=request.question,
-                answer=answer,
+                question=redact_sensitive_data(request.question),
+                answer=redact_sensitive_data(answer),
                 sources=sources,
                 chunks_used=len(chunks),
                 faithfulness_score=hal_score["faithfulness_score"],

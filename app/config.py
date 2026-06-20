@@ -22,6 +22,10 @@ class Settings(BaseSettings):
     # ── API Security ─────────────────────────────────────────
     api_key: str = "demo-key-change-in-production"
 
+    # ── Timeouts (seconds) ──────────────────────────────────
+    llm_timeout: int = 30
+    retrieval_timeout: int = 10
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
