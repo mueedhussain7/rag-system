@@ -50,6 +50,29 @@ async def verify_api_key(x_api_key: str = Header(None)) -> str:
     return x_api_key
 
 
+def validate_file_path(source: str) -> str:
+    """Validate file path to prevent directory traversal attacks."""
+    from pathlib import Path
+    import urllib.parse
+
+    # Check if it's a URL
+    if source.startswith(("http://", "https://")):
+        return source
+
+    # For file paths, validate against directory traversal
+    try:
+        path = Path(source).resolve()
+        allowed_dir = Path("data/documents").resolve()
+
+        # Ensure path is within allowed directory
+        if not str(path).startswith(str(allowed_dir)):
+            raise ValueError(f"Access denied: path must be within data/documents directory")
+
+        return source
+    except (ValueError, RuntimeError) as e:
+        raise ValueError(f"Invalid file path: {str(e)}")
+
+
 def redact_sensitive_data(text: str) -> str:
     """Redact PII and sensitive patterns from text before logging."""
     import re
@@ -86,6 +109,9 @@ app = FastAPI(
     description="Auto-Updating, Hallucination-Aware RAG with Evaluation Dashboard",
     version=settings.app_version,
     lifespan=lifespan,
+    docs_url="/docs" if settings.app_env == "development" else None,
+    redoc_url="/redoc" if settings.app_env == "development" else None,
+    openapi_url="/openapi.json" if settings.app_env == "development" else None,
 )
 
 limiter = Limiter(key_func=get_remote_address)
@@ -93,9 +119,9 @@ app.state.limiter = limiter
 
 # CORS middleware (restrict cross-origin requests)
 allowed_origins = (
-    ["http://localhost:3000", "http://localhost:8501"]  # dev: React + Streamlit
+    ["http://localhost:3000", "http://localhost:8501"] 
     if settings.app_env == "development"
-    else ["https://yourdomain.com"]  # prod: update with real domain
+    else ["https://yourdomain.com"]
 )
 
 app.add_middleware(
@@ -130,7 +156,19 @@ async def enforce_https(request: Request, call_next):
             status_code=400,
             media_type="text/plain"
         )
-    return await call_next(request)
+    response = await call_next(request)
+
+    # Add security headers
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+
+    if settings.app_env == "production":
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        response.headers["Content-Security-Policy"] = "default-src 'self'"
+
+    return response
 
 
 # ── Health ────────────────────────────────────────────────────────────────────
@@ -180,6 +218,9 @@ class ScoreRequest(BaseModel):
 @limiter.limit("10/minute")
 async def ingest(request: IngestRequest, api_key: str = Depends(verify_api_key), _=None):
     try:
+        # Validate file path to prevent directory traversal
+        validate_file_path(request.source)
+
         documents = load_document(request.source)
         chunks    = chunk_documents(documents)
         result    = ingest_chunks(chunks, request.source)
